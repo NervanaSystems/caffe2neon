@@ -84,24 +84,31 @@ else:
 print 'loading model file %s' % args.model_file
 model = ModelDescription(args.model_file)
 
+def find_output_layer(check_lay):
+    layers = []
+    for ind in range(len(check_lay)-1, -1, -1):
+        if check_lay[ind]['type'].find('Linear') > -1:
+            layers.append(check_lay[ind]['config']['name'])
+            break
+        if check_lay[ind]['type'].find('Bias') > -1:
+            layers.append(check_lay[ind]['config']['name'])
+            if ind > 0 and check_lay[ind-1]['type'].find('Linear') > -1:
+                layers.append(check_lay[ind-1]['config']['name'])
+            break
+    print 'found following layers: '
+    print layers
+    return layers
+
 layers = args.layers
 if layers is None or len(layers) == 0:
     print 'No layers indicated - will try to guess'
-    layers = []
     try:
-        for clayer in model['model']['config']['layers']:
-            ls = clayer['config']['layers']
-            for ind in range(len(ls)-1, -1, -1):
-                if ls[ind]['type'].find('Linear') > -1:
-                    layers.append(ls[ind]['config']['name'])
-                    break
-                if ls[ind]['type'].find('Bias') > -1:
-                    layers.append(ls[ind]['config']['name'])
-                    if ind > 0 and ls[ind-1]['type'].find('Linear') > -1:
-                        layers.append(ls[ind-1]['config']['name'])
-                    break
-        print 'found following layers: '
-        print layers
+        if model['model']['type'].find('Tree') > -1:
+            layers = []
+            for clayer in model['model']['config']['layers']:
+                layers.extend(find_output_layer(clayer['config']['layers']))
+        else:
+            layers = find_output_layer(model['model']['config']['layers'])
     except:
         raise ValueError('Could not parse the layers which need to be updated '
                          'provide name(s) of the layer(s) explicitly on command line')
