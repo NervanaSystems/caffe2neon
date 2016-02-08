@@ -1,29 +1,33 @@
 # decaffeinate
-Tools to convert Caffe models to neon's serialization format
+
+Tools to convert Caffe models to neon format
 
 ## Introduction
 
-This repo contains tools to convert caffe models into a format compatible with the neon deep learning libraries.  The main
-script, "decaffeinate.py" takes as input a caffe model definition file and the corresponding model weights file and returns
-a neon serialized model file.  This output file can be used to instantiate the neon Model object, which will generate
-a model in neon that should replicate the behavior of the Caffe model.
-
+This repo contains tools to convert Caffe models into a format compatible with the 
+[neon deep learning library](https://github.com/NervanaSystems/neon).  The main
+script, "decaffeinate.py", takes as input a caffe model definition file and the corresponding
+model weights file and returns a neon serialized model file.  This output file can be used to
+instantiate the neon Model object, which will generate a model in neon that should replicate the 
+behavior of the Caffe model.
 
 
 ## Model conversion
 
-To convert a model from Caffe to neon use the "decaffeinate.py" script.  This script requires the model_file, which is the 
-text protobuf file that defines the Caffe model configuration and the param_file which is a binary protobuf file that
-contains the model parameters and weights.  The decaffeinate script will generate a neon
-model serialization file which can be used to instantiate a model in neon with the same topology and weights.
+To convert a model from Caffe to neon use the
+[decaffeinate.py](https://github.com/NervanaSystems/decaffeinate/blob/master/decaffeinate.py) script.
+This script requires a text protobuf formatted Caffe model definition file and a binary protobuf model
+parameter file.  The decaffeinate script will generate a neon compatible model file with the same model
+configuration and weights.
 
 Example:
 ```
 python decaffeinate.py train_val.prototxt  bvlc_googlenet.caffemodel
 ```
 
-Once the conversion is done, the model can be loaded into neon with the following commands in python (note that neon
-must be installed and, if using the virtual env install the virtual env must be active):
+Once the conversion is done, the model can be loaded into neon with the following python commands.
+In order to instantiate a model a data iterator object is necessary and to run the code below neon
+must be installed, importable and the virtual environment should be active if necessary.
 
 ```
 from neon.models.model import Model
@@ -47,25 +51,25 @@ from neon.transforms.cost import TopKMisclassification
 model.eval(test, TopKMisclassification(k=5))
 ```
 
-See the neon documentation for how to generate the imagenet macrobatches used above [link](http://neon.nervanasys.com/docs/latest/datasets.html#imagenet).
+See the neon documentation for how to generate the imagenet
+[macrobatches](http://neon.nervanasys.com/docs/latest/datasets.html#imagenet) used above.
 
 ## Imagenet category ordering
 
-There is also a helper script that adapts models to the default ILSVRC12 category mapping.  The ILSVRC12 data set used
-by Caffe has the output categories remapped from the default ordering and the neon data iterators for this data set use
-the default ordering.  SO models ported to neon from caffe will need to have the output layer units reordered to match
-the default ILSVRC12 category ordering.  The "i1k_label_mapping.py" script takes the *neon* model file and the list of
-output layers and reorders the weights of output linear and bias layers to match the neon category ordering.
+The ILSVRC12 data set used by Caffe has the output categories remapped from the default ordering which is
+inconsistent with the category mapping used by the neon dataset utilities.  This repo includes a helper script
+to reorder output classifier layers from the Caffe mapping to the neon mapping.  This only applies to the
+ILSVRC12 data set, but a similar remapping could be done for other applications.  The
+[i1k_label_mapping.py](https://github.com/NervanaSystems/decaffeinate/blob/master/i1k_label_mapping.py) script
+takes the *neon* model file and a list of output layers as input and reorders the weights of output linear and bias
+layers to match the neon category ordering.  Currently this script only works on linear layers and the associated
+bias layer.
 
-Currently this script only works on linear layers and the associated bias layer, reordering the units from the Caffe
-category order to the neon order.
-
-To run the script for the first time, users will need to provide the path to the synsets.txt file in the Caffe
-distribution, usually this would be the directory <caffe root>/data/ilsvrc12.  Also users will need to provide
-the path to the ILSVCR2012 devkit tarfile.  After the first run, the script will generate a pickle file with
-the categrory mapping between the two frameworks, and in future runs only the --use_existing option need to given and
-the script will use the saved file to generate the mapping between categories.  Note that the script is expecting
-the directory of the caffe synsets.txt and ILSVCR2012 devkit, not the file itself.
+When running the script for the first time, users will need to provide the path to the synsets.txt file in the Caffe
+distribution, usually this would be the directory _<caffe root>/data/ilsvrc12_, and
+the path to the ILSVCR2012 devkit tarfile.  After the first run, the script will generate a pickle file
+(_neon_caffe_label_map.pkl_) with the categrory mapping between the two frameworks, and future runs can use the
+_--use_existing_ option which will load the mapping from this saved file.
 
 For example:
 ```
