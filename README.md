@@ -59,20 +59,25 @@ See the neon documentation for how to generate the imagenet
 The ILSVRC12 data set used by Caffe has the output categories remapped from the default ordering which is
 inconsistent with the category mapping used by the neon dataset utilities.  This repo includes a helper script
 to reorder output classifier layers from the Caffe mapping to the neon mapping.  This only applies to the
-ILSVRC12 data set, but a similar remapping could be done for other applications.  The
+ILSVRC12 data set, but a similar remapping could be done for other data sets if needed.  The
 [i1k_label_mapping.py](https://github.com/NervanaSystems/decaffeinate/blob/master/i1k_label_mapping.py) script
-takes the *neon* model file and a list of output layers as input and reorders the weights of output linear and bias
-layers to match the neon category ordering.  Currently this script only works on linear layers and the associated
-bias layer.
+takes the *neon* model file and a list of output layers as input and reorders the weights of the specified
+layers to match the neon category ordering.  If no layers are specified, then the script will attempt to
+identify the output linear and bias layers.
 
-When running the script for the first time, users will need to provide the path to the synsets.txt file in the Caffe
+When running the script for the first time, users will need to provide the path to the _synsets.txt_ file in the Caffe
 distribution, usually this would be the directory _<caffe root>/data/ilsvrc12_, and
 the path to the ILSVCR2012 devkit tarfile.  After the first run, the script will generate a pickle file
-(_neon_caffe_label_map.pkl_) with the categrory mapping between the two frameworks, and future runs can use the
-_--use_existing_ option which will load the mapping from this saved file.
+named _neon_caffe_label_map.pkl_ which will store the categrory mapping between the two frameworks and
+future runs can obtain the mapping from this file instead of recreating it from scratch.
+Subsequent execution of this script can use the _--use_existing_ option to pull the mapping from this pickle
+file and will not require the ILSVRC files as options.
+
+The pickle file with the mapping can also be downloaded from the following link: [neon_caffe_label_map.p]( https://s3-us-west-1.amazonaws.com/nervana-modelzoo/neon_caffe_label_map.p).  Place the file in the main repo directory.
 
 For example:
 ```
+#first run
 python i1k_label_mapping.py googlenet.prm  --caffe_synset ~/repos/caffe/data/ilsvrc12/ --neon_mb /mnt/data/I1K_raw/
 
 # on subsequent runs:
@@ -80,18 +85,19 @@ python i1k_label_mapping.py googlenet.prm --use_existing
 
 ```
 
-The script will try to infer the correct layers to alter, if this does not work users will have to enter all the
-layers to alter by hand using the --layers parameter.  Note that in neon, bias layers are seperate layers, and both
-the name of the linear layer and its corresponding bias layer will need to be specified.
+The script will try to infer the correct layers to alter, if this does not work users will have to enter the name
+of all the layers to alter by hand using the _--layers_ command line parameter.  Note that in neon, bias layers are
+seperate layers, and both the name of the linear layer and its corresponding bias layer will need to be specified.
 
 
 ## Versions
 
-These tools require neon version 1.2.1.  The scripts have been developed using the Caffe repo with the git SHA
+These tools require neon version 1.2.1 and were developed using the Caffe repo state at commit SHA
 ca4e3428b.
 
 ## Disclaimer
-Due to differences in supported layers and layer implementations between neon and Caffe, not all models can be
-converted.  Here we try to alert the user whena  conversion may not be possible.  Also only a limited set of
-model architectures have been tested, so these tools are very much a work in progress.  We appreciate any feedback
-and, as this is an open source library, we appreciate outside contributions to expand these tools.
+Due to differences between neon and Caffe in which types of layers are supported and the implementation of those layers
+not all models can be converted to neon format.  Here we try to alert the user when a conversion may not be possible,
+but there may be incompatible cases that do not trigger an alert.  This is a work in progress and only a limited number
+of model  architectures have been tests.  We appreciate any feedback and, as this is an open source library, we
+appreciate outside contributions to improve and expand these tools.
