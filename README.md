@@ -1,4 +1,4 @@
-# decaffeinate
+# caffe2neon
 
 Tools to convert Caffe models to neon format
 
