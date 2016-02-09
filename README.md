@@ -99,5 +99,5 @@ ca4e3428b.
 Due to differences between neon and Caffe in which types of layers are supported and the implementation of those layers
 not all models can be converted to neon format.  Here we try to alert the user when a conversion may not be possible,
 but there may be incompatible cases that do not trigger an alert.  This is a work in progress and only a limited number
-of model  architectures have been tests.  We appreciate any feedback and, as this is an open source library, we
+of model  architectures have been tested.  We appreciate any feedback and, as this is an open source library, we
 appreciate outside contributions to improve and expand these tools.
