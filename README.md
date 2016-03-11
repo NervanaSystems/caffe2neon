@@ -12,6 +12,14 @@ instantiate the neon Model object, which will generate a model in neon that shou
 behavior of the Caffe model.
 
 
+## Installation
+
+Firt make sure you have neon installed and activate the neon virtualenv.  This tools requires
+that some extra packages be installed into the virtualenv.  To do that, run the command:
+```
+pip install -r path/to/caffe2neon/requirements.txt
+```
+
 ## Model conversion
 
 To convert a model from Caffe to neon use the
