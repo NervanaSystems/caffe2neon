@@ -14,11 +14,21 @@ behavior of the Caffe model.
 
 ## Installation
 
-Firt make sure you have neon installed and activate the neon virtualenv.  This tools requires
+First make sure you have neon installed and activate the neon virtualenv.  This tools requires
 that some extra packages be installed into the virtualenv.  To do that, run the command:
 ```
 pip install -r path/to/caffe2neon/requirements.txt
 ```
+
+Usually neon is installed into a virtualenv and caffe will be installed systemwide, not in the virtualenv.
+So it may be necessary to add caffe and caffe protobuf libraries to your PYTHONPATH environment variable:
+```
+export $PYTHONPATH=$PYTHONPATH:path/to/cafferepo/python:path/to/cafferepo//python/caffe/proto/
+```
+
+Also note that if caffe was built with a numpy version that is different than that used by neon you may have
+issues importing caffe into python from the neon virtualenv.  You may need to install the same numpy version
+installed by neon into the virtualenv and rebuild the caffe installation.
 
 ## Model conversion
 
