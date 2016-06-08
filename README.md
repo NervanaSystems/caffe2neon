@@ -100,7 +100,7 @@ seperate layers, and both the name of the linear layer and its corresponding bia
 
 ## Versions
 
-These tools require the neon repo at the commit SHA [e7ab2c2e2](https://github.com/NervanaSystems/neon/commit/e7ab2c2e27f113a4d36d17ba8c79546faed7d916) or later and were developed using the Caffe repo state at commit SHA
+These tools require the neon repo at the commit version tag [v1.4.0](https://github.com/NervanaSystems/neon/tree/v1.4.0) and were developed using the Caffe repo state at commit SHA
 ca4e3428b.
 
 ## Disclaimer
