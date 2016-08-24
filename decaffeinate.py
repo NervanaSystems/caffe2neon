@@ -61,7 +61,7 @@ class GNode():
             if layer.type != 'Data':
                 raise ValueError('Currently only support multiple tops in data layer')
             else:
-                # will on;y use the top named 'data'
+                # will only use the top named 'data'
                 try:
                     datal = tops.index('data')
                 except ValueError:
@@ -117,8 +117,10 @@ class graph():
         layers = list(layers)
         for ind, l in enumerate(layers):
             if len(l.bottom) == 0:
-                assert l.type.lower() == 'data'
+                assert l.type.lower() in ['data', 'dummydata']  # may add more data layer types here
                 root_layer_ind.append(ind)
+
+
         if len(root_layer_ind) != 1:
             raise ValueError('Found %d data layers, should have only 1' % len(root_layer_ind))
         root_layer_ind = root_layer_ind[0]
@@ -138,7 +140,7 @@ class graph():
         if self.check_support(self.root):
             print 'supported!\n'
         else:
-            raise NotImplemented('Can not convert to neon')
+            raise NotImplementedError('Can not convert to neon')
 
     def build_graph(self):
         #
@@ -196,7 +198,7 @@ class graph():
         # layers supported by neon
         SUPPORTED_LAYERS = ['InnerProduct', 'Bias', 'Dropout', 'Convolution',
                             'Pooling', 'Data', 'ReLU', 'Concat','Softmax', 
-                            'SoftmaxWithLoss', 'LRN']
+                            'SoftmaxWithLoss', 'LRN', 'DummyData']
 
         if node.ltype not in SUPPORTED_LAYERS:
             print 'Found unsupported layer type %s [%s]' % (node.name, node.ltype)
@@ -410,6 +412,13 @@ class NeonNode():
         return (new_node,)
 
     @classmethod
+    def DummyData(cls, node):
+        new_node = cls()
+        new_node.name = node.name
+        assert len(node.inplace_nodes) == 0
+        return (new_node,)
+
+    @classmethod
     def MergeBroadcast(cls, end_node, branch_heads, name='none'):
         newlayer = cls('neon.layers.container.MergeBroadcast', name = name + '_inception')
         newlayer.pdict['config']['merge'] = 'depth'
@@ -545,6 +554,7 @@ class NeonNode():
         k_h = getattr(lparam, key+'_h')
         k_w = getattr(lparam, key+'_w')
         if k_h == 0 and k_w == 0:
+            import ipdb; ipdb.set_trace()
             raise ValueError('Can not parse kernel size')
         return [k_h, k_w]
 
@@ -611,14 +621,28 @@ class NeonNode():
     @classmethod
     def Pooling(cls, node):
         newlayer = cls('neon.layers.layer.Pooling', name=node.name)
-        params = cls.parse_layer_params(node.layer.pooling_param)
-        newlayer.pdict['config'].update(params)
+
         op_ind = node.layer.pooling_param.pool
-        op = node.layer.pooling_param.PoolMethod.Name(op_ind).lower()
-        if op == 'ave':
+
+        max_ind = node.layer.pooling_param.MAX
+        ave_ind = node.layer.pooling_param.AVE
+        assert op_ind in [max_ind, ave_ind], 'Only MAX and AVE pooling supported'
+
+        global_pool = False
+        if op_ind == max_ind:
+            op = 'max'
+        else:
             op = 'avg'
-        assert op in ['max', 'avg']
+            # check for global pooling
+            global_pool = node.layer.pooling_param.global_pooling
+
         newlayer.pdict['config']['op'] = op
+
+        if not global_pool:
+            params = cls.parse_layer_params(node.layer.pooling_param)
+            newlayer.pdict['config'].update(params)
+        else:
+            newlayer.pdict['config'].update({'fshape': 'all'})
 
         last_node = newlayer
         for ipnode in node.inplace_nodes:
@@ -746,12 +770,12 @@ class Decaffeinate():
         with open(model_file, 'r') as fid:
             text_format.Merge(fid.read(), self.net)
 
-        # remove layers used for testing only 
         layers = self.net.layer
         if len(layers) == 0:
             raise NotImplementedError('Convert model def prototxt to use new caffe '
                                       'format (layer not layers) [%s]' % model_file)
 
+        # remove layers used for testing only 
         for ind in range(len(layers)-1, -1, -1):
             l = layers[ind]
             if len(l.include) > 0:
@@ -762,10 +786,7 @@ class Decaffeinate():
             net_w = caffe_pb2.NetParameter()
             net_w.ParseFromString(fid.read())
 
-        # try to work with models in the V1 format
-        # may not be able to handle the protobuf definition
-        # differences, may need to provide utility to port models
-        # to new caffe pb format
+        # caffe2neon does not work with the old caffe protobuf format
         if len(net_w.layer) == 0:
             # have had success converting old V1 format to new format by training 
             # for 1 iteration and serializing
@@ -781,9 +802,36 @@ class Decaffeinate():
         # getting the old style protobuf objects (net.layers instead of net.layer)
 
         # load up the learned parameters
+        data_layers = []
         for l in layers:
-            ind = lnames.index(l.name)
+            # check for a data layer
+            if l.type.lower in ['data', 'dummydata']:
+                data_layers.append(l.name)
+
+            try:
+                ind = lnames.index(l.name)
+            except ValueError:
+                print '%s from prototxt file '  % l.name + \
+                      'not in layer parameter file'
+                print 'continuing without loading any parameters...'
+                continue
+
             l.blobs.extend(net_w.layer[ind].blobs)
+
+        if len(data_layers) == 0:
+            print 'Found no data layers in model file'
+            print 'Checking for input parameters...'
+            assert len(self.net.input_shape) > 0
+            print 'Generating dummy data layer for input'
+            print 'Assuming input data blob is named "data"'
+            data_layer = caffe_pb2.LayerParameter()
+            data_layer.name = 'data'
+            data_layer.type = 'DummyData'
+            data_layer.top.append('data')
+            inp_shape = self.net.input_shape
+            data_layer.dummy_data_param.shape.MergeFrom(inp_shape)
+            newl = layers.add()
+            newl.MergeFrom(data_layer)
 
         # generate the graph
         self.graph = graph(layers)
@@ -801,7 +849,7 @@ class Decaffeinate():
         # run down the graph and generate a neon "compatible" graph
         graph = self.graph
         data_node = graph.root
-        assert data_node.ltype == 'Data'
+        assert data_node.ltype in ['Data', 'DummyData']
         assert 'data' in data_node.out_names, 'Data layer must have output named "data"'
 
         # generate neon graph
@@ -850,22 +898,34 @@ class Decaffeinate():
             cdict = {'type': 'neon.layers.container.Multicost'}
             cdict['config'] = {'costs': [], 'weights': []}
             for tnode in pdict['model']['config']['layers']:
-                lnode = tnode['config']['layers'].pop()
+                lnode = tnode['config']['layers'][-1]
                 name = lnode['config']['name']
                 assert name in lwght
                 cdict['config']['weights'].append(lwght[name])
 
-                assert lnode['type'] == 'neon.layers.layer.GeneralizedCost', \
-                       'Final layers need to be loss layers'
-                cdict['config']['costs'].append(lnode)
+                if lnode['type'] == 'neon.layers.layer.GeneralizedCost':
+                    # pop cost layers off the stack
+                    tnode['config']['layers'].pop()
+                    cdict['config']['costs'].append(lnode)
+                else:
+                    cdict['config']['costs'].append(None)
+
+            cost_present = [tmpc is not None for tmpc in cdict['config']['costs']]
+            if all(cost_present):
+                pdict['cost'] = cdict
+            else:
+                assert not any(cost_present), 'Missing cost for some branches of tree'
         else:
             # sequential model uses a single cost function
             head = pdict['model']['config']['layers']
-            lnode = head.pop()
-            assert lnode['type'] == 'neon.layers.layer.GeneralizedCost', \
-                   'Final layers need to be loss layers'
-            cdict = lnode
-        pdict['cost'] = cdict
+            lnode = head[-1]
+            if lnode['type'] == 'neon.layers.layer.GeneralizedCost':
+                # pop cost layers off the stack
+                head.pop()
+                cdict = lnode
+                pdict['cost'] = cdict
+            else:
+                pdict['cost'] = None
 
         # set backend for caffe compatibility
         pdict['backend'] = {'compat_mode': 'caffe'}
