@@ -198,14 +198,31 @@ class graph():
         # layers supported by neon
         SUPPORTED_LAYERS = ['InnerProduct', 'Bias', 'Dropout', 'Convolution',
                             'Pooling', 'Data', 'ReLU', 'Concat','Softmax', 
-                            'SoftmaxWithLoss', 'LRN', 'DummyData']
+                            'SoftmaxWithLoss', 'LRN', 'DummyData', 'Eltwise',
+                            'BatchNorm', 'Scale']
 
         if node.ltype not in SUPPORTED_LAYERS:
             print 'Found unsupported layer type %s [%s]' % (node.name, node.ltype)
             return False
 
-        for node in node.ds_nodes:
-            if not self.check_support(node):
+        for ind_, node_ in enumerate(node.inplace_nodes):
+            if node_.ltype == 'BatchNorm':
+                try:
+                    assert node.inplace_nodes[ind_ + 1].ltype == 'Scale'
+                except:
+                    raise ValueError('Scale layer must follow BatchNorm')
+
+            if node_.ltype == 'Scale':
+                try:
+                    assert node.inplace_nodes[ind_ - 1].ltype == 'BatchNorm'
+                except:
+                    raise ValueError('BatchNorm layer must precede Scale')
+
+            if not self.check_support(node_):
+                return False
+
+        for node_ in node.ds_nodes:
+            if not self.check_support(node_):
                 return False
         return True
 
@@ -245,7 +262,11 @@ class graph():
                 branch_in_merge.append(ind)
                 end_nodes_test.append(n)
         if len(end_nodes_test) > 1 and all([x == end_nodes_test[0] for x in end_nodes_test]) and \
-               end_nodes_test[0].ltype == 'Concat':
+               end_nodes_test[0].ltype in ['Concat', 'Eltwise']:
+            if end_nodes_test[0].ltype == 'Eltwise':
+                sum_op = dict(end_nodes_test[0].layer.eltwise_param.EltwiseOp.items())['SUM']
+                # currently only support merge sum operation
+                assert end_nodes_test[0].layer.eltwise_param.operation == sum_op
             # need at least 2 branches for a merge broadcast and all must end at the same node
             return (end_nodes_test[0], branch_in_merge)
         return None
@@ -263,7 +284,7 @@ class graph():
         #   depth (int): depth into network from source node
         #
         # descend until a Concat node is hit
-        if node.ltype == 'Concat':
+        if node.ltype in ['Concat', 'Eltwise']:
             return node
         if len(node.ds_nodes) != 1:
             # do not currently support case with len(ds_nodes) > 1
@@ -389,6 +410,11 @@ class NeonNode():
         # takes a caffe node and calls the appropriate
         # generator function using the class name
         #
+        try:
+            xxx = getattr(cls, node.ltype)(node)
+        except:
+            import ipdb; ipdb.set_trace()
+
         return getattr(cls, node.ltype)(node)
 
     # classmethods below are generators which return
@@ -419,20 +445,33 @@ class NeonNode():
         return (new_node,)
 
     @classmethod
-    def MergeBroadcast(cls, end_node, branch_heads, name='none'):
-        newlayer = cls('neon.layers.container.MergeBroadcast', name = name + '_inception')
-        newlayer.pdict['config']['merge'] = 'depth'
+    def SkipNode(cls, node, name=None):
+        new_node = cls('neon.layers.layer.SkipNode')
+        return (new_node,)
+
+    @classmethod
+    def MergeBroadcast(cls, end_node, branch_heads, name='none', inception=True):
+        nm_ext = '_inception' if inception else '_residual'
+        newlayer = cls('neon.layers.container.MergeBroadcast', name = name + nm_ext)
+        if inception:
+            newlayer.pdict['config']['merge'] = 'depth'
 
         newlayer.nhead = []
+
         for cnode in branch_heads:
-            new_head = NeonNode.load_from_caffe_node(cnode)
-            newlayer.nhead.append(new_head[0])
+            if cnode == end_node:
+                new_head = NeonNode.SkipNode(cnode)
+                newlayer.nhead.append(new_head[0])
+                continue
+            else:
+                new_head = NeonNode.load_from_caffe_node(cnode)
+                newlayer.nhead.append(new_head[0])
             nnode = new_head[-1]
             while (True):
-                assert len(cnode.ds_nodes) == 1
                 cnode = cnode.ds_nodes[0]
                 if cnode == end_node:
                     break
+                assert len(cnode.ds_nodes) == 1
                 new_node = NeonNode.load_from_caffe_node(cnode)
                 nnode.ds_nodes.append(new_node[0])
                 nnode = new_node[-1]
@@ -442,7 +481,7 @@ class NeonNode():
 
         # add a merge broadcast container
         newlayer.pdict.update({'container': True})
-        newlayer.pdict['config'].update({'layers': [], 'merge': 'depth'})
+        newlayer.pdict['config'].update({'layers': []})
         for nnode in newlayer.nhead:
             # each branch is in a sequential container
             cont = {'type': 'neon.layers.container.Sequential',
@@ -486,11 +525,33 @@ class NeonNode():
             newlayer.ds_nodes.append(bias_node[0])
             last_node = bias_node[-1]
 
-        for ipnode in node.inplace_nodes:
-            iplayer = NeonNode.load_from_caffe_node(ipnode)
+        ind = 0
+        while ind < len(node.inplace_nodes):
+            ipnode = node.inplace_nodes[ind]
+            if ipnode.ltype == 'BatchNorm':
+                iplayer = cls.add_batchnorm(ind, node.inplace_nodes, last_node, node.name)
+                ind += 2
+            else:
+                iplayer = NeonNode.load_from_caffe_node(ipnode)
+                ind += 1
             last_node.ds_nodes.append(iplayer[0])
             last_node = iplayer[-1]
         return (newlayer, last_node)
+
+    @classmethod
+    def add_batchnorm(cls, ind, ipnodes, last_node, name):
+        assert ind+1 < len(ipnodes)
+        assert ipnodes[ind].ltype == 'BatchNorm' and ipnodes[ind+1].ltype == 'Scale'
+        newlayer = cls('neon.layers.layer.BatchNorm', name=name+'_bn')
+        bn_ = ipnodes[ind].layer
+        scl_ = ipnodes[ind+1].layer
+        newlayer.pdict['params'] = {'gmean' : np.array(bn_.blobs[0].data).copy().astype(np.float32),
+                                    'gvar'  : np.array(bn_.blobs[1].data).copy().astype(np.float32),
+                                    'gamma' : np.array(scl_.blobs[0].data).copy().astype(np.float32),
+                                    'beta'  : np.array(scl_.blobs[1].data).copy().astype(np.float32),
+                                    'eps'   : np.float32(bn_.batch_norm_param.eps)
+                                    }
+        return (newlayer,)
 
     @staticmethod
     def parse_layer_params(lparam, conv=False):
@@ -554,7 +615,6 @@ class NeonNode():
         k_h = getattr(lparam, key+'_h')
         k_w = getattr(lparam, key+'_w')
         if k_h == 0 and k_w == 0:
-            import ipdb; ipdb.set_trace()
             raise ValueError('Can not parse kernel size')
         return [k_h, k_w]
 
@@ -749,6 +809,10 @@ class NeonNode():
         # TODO ADD METRIC
         return (None,)
 
+    @classmethod
+    def Eltwise(cls, node):
+        return (node,)
+
 
 class Decaffeinate():
     #
@@ -805,7 +869,7 @@ class Decaffeinate():
         data_layers = []
         for l in layers:
             # check for a data layer
-            if l.type.lower in ['data', 'dummydata']:
+            if l.type.lower() in ['data', 'dummydata']:
                 data_layers.append(l.name)
 
             try:
@@ -1005,6 +1069,7 @@ class Decaffeinate():
         # will generate a graph starting at self.neon_root
 
         allinds = range(len(cnode.ds_nodes))
+
         if len(cnode.ds_nodes) > 1:
             # check for inception/mergeBroadcast type layer
             mb_node = self.graph.check_merge_broadcast(cnode)
@@ -1012,7 +1077,12 @@ class Decaffeinate():
                 end_node, mbinds = mb_node
                 branches = [cnode.ds_nodes[ind] for ind in mbinds]
 
-                mb_node = NeonNode.MergeBroadcast(end_node, branches, name=cnode.name)
+                if mb_node[0].ltype not in ['Eltwise', 'Concat']:
+                    raise ValueError('Currently support only for suma nd concat merge '
+                                     '[%s]' % mb_node[0].ltype)
+
+                mb_node = NeonNode.MergeBroadcast(end_node, branches, name=cnode.name,
+                                                      inception=mb_node[0].ltype=='Concat')
                 nnode.ds_nodes.append(mb_node[0])
 
                 for ind in mbinds:
@@ -1021,6 +1091,8 @@ class Decaffeinate():
                 self.neonize(end_node, mb_node[-1])
 
         for ind in allinds:
+            #if cnode.ds_nodes[ind].name == 'res5c':
+            #    import ipdb; ipdb.set_trace()
             new_node = NeonNode.load_from_caffe_node(cnode.ds_nodes[ind])
             nnode.ds_nodes.append(new_node[0])
             new_node = new_node[-1]
