@@ -410,11 +410,6 @@ class NeonNode():
         # takes a caffe node and calls the appropriate
         # generator function using the class name
         #
-        try:
-            xxx = getattr(cls, node.ltype)(node)
-        except:
-            import ipdb; ipdb.set_trace()
-
         return getattr(cls, node.ltype)(node)
 
     # classmethods below are generators which return
@@ -452,7 +447,8 @@ class NeonNode():
     @classmethod
     def MergeBroadcast(cls, end_node, branch_heads, name='none', inception=True):
         nm_ext = '_inception' if inception else '_residual'
-        newlayer = cls('neon.layers.container.MergeBroadcast', name = name + nm_ext)
+        ltype = 'MergeBroadcast' if inception else 'MergeSum'
+        newlayer = cls('neon.layers.container.%s' % ltype, name = name + nm_ext)
         if inception:
             newlayer.pdict['config']['merge'] = 'depth'
 
@@ -475,6 +471,7 @@ class NeonNode():
                 new_node = NeonNode.load_from_caffe_node(cnode)
                 nnode.ds_nodes.append(new_node[0])
                 nnode = new_node[-1]
+
 
         # since this is a container the pdict is more complicated
         # than for a single layer
@@ -500,8 +497,17 @@ class NeonNode():
                 node = node.ds_nodes[0]
     
             newlayer.pdict['config']['layers'].append(cont)
+        
+        # the end_node here will be Eltwise
+        # this is done by the container MergeSum
+        # but it may have an inplace op like ReLu
+        last_layer = newlayer
+        for ipnode in end_node.inplace_nodes:
+            nnode = NeonNode.load_from_caffe_node(ipnode)
+            last_layer.ds_nodes.append(nnode[0])
+            last_layer = nnode[-1]
 
-        return (newlayer,)
+        return (newlayer, last_layer)
 
     @classmethod
     def Convolution(cls, node):
@@ -545,11 +551,11 @@ class NeonNode():
         newlayer = cls('neon.layers.layer.BatchNorm', name=name+'_bn')
         bn_ = ipnodes[ind].layer
         scl_ = ipnodes[ind+1].layer
+        newlayer.pdict['config']['eps'] = float(bn_.batch_norm_param.eps)
         newlayer.pdict['params'] = {'gmean' : np.array(bn_.blobs[0].data).copy().astype(np.float32),
                                     'gvar'  : np.array(bn_.blobs[1].data).copy().astype(np.float32),
                                     'gamma' : np.array(scl_.blobs[0].data).copy().astype(np.float32),
-                                    'beta'  : np.array(scl_.blobs[1].data).copy().astype(np.float32),
-                                    'eps'   : np.float32(bn_.batch_norm_param.eps)
+                                    'beta'  : np.array(scl_.blobs[1].data).copy().astype(np.float32)
                                     }
         return (newlayer,)
 
@@ -764,7 +770,7 @@ class NeonNode():
         # macro for activations
         act_type_short = act_type.split('.')[-1]
         newlayer = cls('neon.layers.layer.Activation', name = node.name + '_' + act_type_short)
-        newlayer.pdict['config']['transform'] = {'type': act_type}
+        newlayer.pdict['config']['transform'] = {'type': act_type, 'config': {}}
         return newlayer
 
     @classmethod
@@ -793,7 +799,8 @@ class NeonNode():
     @classmethod
     def CrossEntropyMulti(cls, node):
         newlayer = cls('neon.layers.layer.GeneralizedCost', name=node.name, loss_layer=True)
-        newlayer.pdict['config']['costfunc'] = {'type': 'neon.transforms.cost.CrossEntropyMulti'}
+        newlayer.pdict['config']['costfunc'] = {'type': 'neon.transforms.cost.CrossEntropyMulti',
+                                                'config': {}}
         return (newlayer,)
 
     @classmethod
@@ -808,10 +815,6 @@ class NeonNode():
         # cost not handled here
         # TODO ADD METRIC
         return (None,)
-
-    @classmethod
-    def Eltwise(cls, node):
-        return (node,)
 
 
 class Decaffeinate():
