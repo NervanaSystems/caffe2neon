@@ -575,15 +575,15 @@ class NeonNode():
 
         padding = NeonNode.parse_size(lparam, 'pad')
         if padding[0] == padding[1]:
-            padding = padding[0]
+            padding = int(padding[0])
         else:
             padding = {'pad_h': padding[0], 'pad_w': padding[1]}
 
         stride = NeonNode.parse_size(lparam, 'stride')
         if stride[0] == stride[1]:
-            stride = stride[0]
+            stride = int(stride[0])
         else:
-            stride = {'pad_h': stride[0], 'pad_w': stride[1]}
+            stride = {'str_h': stride[0], 'str_w': stride[1]}
 
         params = {}
         params['strides'] = stride
@@ -605,13 +605,18 @@ class NeonNode():
             if type(ks) is int and ks > 0:
                 return [ks]*2
             
-            if type(ks) is list or type(ks) is RepeatedScalarFieldContainer:
+            #if type(ks) is list or type(ks) is RepeatedScalarFieldContainer:
+            try:
                 ks = list(ks)
                 if len(ks) > 3:
                     raise NotImplementedError()
                 if len(ks) > 0 and all([x > 0 for x in ks]):
                     return [ks[0], ks[-1]]
                 # ks is [] or has an element that is <= 0
+            except NotImplementedError:
+                raise NotImplementedError
+            except:
+                pass
 
         # try to parse from kernel_h and _w
         key = 'kernel'
@@ -634,21 +639,26 @@ class NeonNode():
             if type(ps) is int:
                 return [ps]*2
             
-            if type(ps) is list or type(ps) is RepeatedScalarFieldContainer:
+            # try to capture a protobuf repeated field
+            try:
                 ps = list(ps)
                 if len(ps) > 3:
                     raise NotImplementedError()
                 if len(ps) > 0:
                     return [ps[0], ps[-1]]
+            except NotImplementedError:
+                raise NotImplementedError()
+            except:
+                pass
 
         # default to [0, 0]
         ps = [0, 0]
 
         try:
             k_h = getattr(lparam, key+'_h')
-            ps[0] = k_h
+            ps[0] = int(k_h)
             k_w = getattr(lparam, key+'_w')
-            ps[1] = k_w
+            ps[1] = int(k_w)
         except:
             pass
         return ps
@@ -663,12 +673,16 @@ class NeonNode():
             if type(ss) is int:
                 return [ss]*2
             
-            if type(ss) is list or type(ss) is RepeatedScalarFieldContainer:
+            try:
                 ss = list(ss)
-                if len(ss) > 3:
-                    raise NotImplementedError()
                 if len(ss) > 0 and all([x > 0 for x in ss]):
                     return [ss[0], ss[-1]]
+                if len(ss) > 3:
+                    raise NotImplementedError()
+            except NotImplementedError:
+                raise NotImplementedError()
+            except:
+                pass
 
         # default to [1, 1]
         ss = [1, 1]
@@ -676,10 +690,10 @@ class NeonNode():
         try:
             k_h = getattr(lparam, key+'_h')
             if k_h > 0:
-                ss[0] = k_h
+                ss[0] = int(k_h)
             k_w = getattr(lparam, key+'_w')
             if k_w > 0:
-                ss[1] = k_w
+                ss[1] = int(k_w)
         except:
             pass
         return ss
